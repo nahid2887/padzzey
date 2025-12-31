@@ -271,18 +271,20 @@ LONE_WOLF_BASE_URL = os.getenv('LONE_WOLF_BASE_URL', 'https://api.lwolf.com/v1')
 # =============================================================================
 # CORS Configuration
 # =============================================================================
-# Allow all origins in development
-CORS_ALLOW_ALL_ORIGINS = True
-
-# If you want to restrict to specific origins, uncomment below and comment CORS_ALLOW_ALL_ORIGINS:
-# CORS_ALLOWED_ORIGINS = [
-#     "http://localhost:3003",
-#     "http://127.0.0.1:3003",
-#     "http://localhost:3000",
-#     "http://127.0.0.1:3000",
-#     "http://10.10.13.27:3003",
-#     "http://10.10.13.27:8005",
-# ]
+# Allow all origins in development, restrict to specific origins in production
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:3003",
+        "http://127.0.0.1:3003",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://10.10.13.27:3003",
+        "http://10.10.13.27:8005",
+        "https://aesthetic-choux-96e718.netlify.app",
+    ]
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -307,7 +309,6 @@ CORS_EXPOSE_HEADERS = [
 CORS_MAX_AGE = 86400  # 24 hours
 
 # CSRF Configuration
-# Allow all origins for CSRF (development mode)
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3003",
     "http://127.0.0.1:3003",
@@ -315,6 +316,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://10.10.13.27:3003",
     "http://10.10.13.27:8005",
+    "https://aesthetic-choux-96e718.netlify.app",
 ]
 
 CSRF_COOKIE_SECURE = True  # Set to True for HTTPS, False for HTTP in development
