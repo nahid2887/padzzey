@@ -30,7 +30,8 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-t^5!^)4-3wwwt$_x_r8@g5=p)j
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['*']  # Allow all hosts for development
+# Allowed hosts
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'pineriverapp.com,www.pineriverapp.com').split(',')
 
 
 # Application definition
@@ -284,6 +285,10 @@ else:
         "http://10.10.13.27:3003",
         "http://10.10.13.27:8005",
         "https://aesthetic-choux-96e718.netlify.app",
+        "https://pineriverapp.com",
+        "https://www.pineriverapp.com",
+        "http://pineriverapp.com",
+        "http://www.pineriverapp.com",
     ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -297,7 +302,7 @@ CORS_ALLOW_HEADERS = [
     'origin',
     'user-agent',
     'x-csrftoken',
-    'x-requested-with',
+    'x-requested-with'
     'access-control-allow-headers',
 ]
 
@@ -317,6 +322,11 @@ CSRF_TRUSTED_ORIGINS = [
     "http://10.10.13.27:3003",
     "http://10.10.13.27:8005",
     "https://aesthetic-choux-96e718.netlify.app",
+    "https://pineriverapp.com",
+    "https://www.pineriverapp.com",
+    "http://pineriverapp.com",
+    "http://www.pineriverapp.com",
+]
 ]
 
 CSRF_COOKIE_SECURE = True  # Set to True for HTTPS, False for HTTP in development

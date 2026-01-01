@@ -39,8 +39,8 @@ services:
       - ./pdezzy:/app
       - static_volume:/app/static
       - media_volume:/app/media
-    ports:
-      - "8006:8006"
+    expose:
+      - 8006
     environment:
       - DEBUG=${DEBUG:-False}
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
@@ -52,7 +52,7 @@ services:
       - DB_HOST=db
       - DB_PORT=5432
       - REDIS_URL=redis://redis:6379/0
-      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-pineriverapp.com,www.pineriverapp.com}
     depends_on:
       db:
         condition: service_healthy
@@ -60,6 +60,35 @@ services:
         condition: service_healthy
     networks:
       - pdezzy_network
+
+  nginx:
+    build: ./nginx
+    container_name: pdezzy_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/nginx.conf:ro
+      - static_volume:/app/staticfiles:ro
+      - media_volume:/app/media:ro
+      - certbot_data:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - web
+    networks:
+      - pdezzy_network
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: pdezzy_certbot
+    volumes:
+      - certbot_data:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done;"
+    networks:
+      - pdezzy_network
+    restart: unless-stopped
 
   # Optional: Celery worker for async tasks (uncomment if celery is in requirements.txt)
   # celery:
@@ -89,6 +118,8 @@ volumes:
   postgres_data:
   static_volume:
   media_volume:
+  certbot_data:
+  certbot_www:
 
 networks:
   pdezzy_network:
