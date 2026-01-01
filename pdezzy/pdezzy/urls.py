@@ -22,6 +22,28 @@ from superadmin.admin import admin_site
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+
+class APIRootView(APIView):
+    """Root API endpoint"""
+    def get(self, request):
+        return Response({
+            'message': 'Welcome to PDezzy API',
+            'api_v1': {
+                'admin': '/api/v1/admin/',
+                'agent': '/api/v1/agent/',
+                'seller': '/api/v1/seller/',
+                'buyer': '/api/v1/buyer/',
+                'common': '/api/v1/common/',
+                'messaging': '/api/v1/messaging/',
+            },
+            'documentation': {
+                'swagger': '/swagger/',
+                'redoc': '/redoc/',
+            }
+        })
 
 # drf_yasg schema view
 schema_view = get_schema_view(
@@ -64,6 +86,9 @@ urlpatterns = [
     # Admin Dashboard - Custom dashboard with user management and statistics
     # URL: /admin/ or /admin/dashboard/
     path('admin/', admin_site.urls),
+    
+    # API Root
+    path('api/', APIRootView.as_view(), name='api-root'),
     
     # Admin API Endpoints
     path('api/v1/admin/', include('superadmin.urls')),
