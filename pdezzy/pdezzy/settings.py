@@ -327,7 +327,6 @@ CSRF_TRUSTED_ORIGINS = [
     "http://pineriverapp.com",
     "http://www.pineriverapp.com",
 ]
-]
 
 CSRF_COOKIE_SECURE = True  # Set to True for HTTPS, False for HTTP in development
 CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript to read CSRF token
