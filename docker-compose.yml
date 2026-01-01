@@ -71,7 +71,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/nginx.conf:ro
       - static_volume:/app/staticfiles:ro
       - media_volume:/app/media:ro
-      - ./certbot_data:/etc/letsencrypt:ro
+      - ./certbot_data:/etc/letsencrypt
       - ./certbot_www:/var/www/certbot:ro
     depends_on:
       - web
