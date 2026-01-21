@@ -67,3 +67,6 @@ urlpatterns = [
     path('documents/<int:document_id>/', views.platform_document_detail, name='platform_document_detail'),
     path('documents/public/', views.platform_documents_public, name='platform_documents_public'),
 ]
+
+
+# URLS 
