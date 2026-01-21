@@ -264,10 +264,18 @@ CHANNEL_LAYERS = {
 OTP_LENGTH = int(os.getenv('OTP_LENGTH', 6))
 
 # =============================================================================
-# MLS/Lone Wolf API Configuration
+# MLS/Lone Wolf API Configuration (Legacy)
 # =============================================================================
 LONE_WOLF_API_KEY = os.getenv('LONE_WOLF_API_KEY', '375c4a4caa2c2a2d1092e918')
 LONE_WOLF_BASE_URL = os.getenv('LONE_WOLF_BASE_URL', 'https://api.lwolf.com/v1')
+
+# =============================================================================
+# Paragon MLS (PrimeMLS) OData API Configuration
+# =============================================================================
+PARAGON_CLIENT_ID = os.getenv('PARAGON_CLIENT_ID', '')
+PARAGON_CLIENT_SECRET = os.getenv('PARAGON_CLIENT_SECRET', '')
+PARAGON_TOKEN_URL = os.getenv('PARAGON_TOKEN_URL', 'https://PrimeMLS.paragonrels.com/OData/PrimeMLS/identity/connect/token')
+PARAGON_BASE_URL = os.getenv('PARAGON_BASE_URL', 'https://PrimeMLS.paragonrels.com/OData/PrimeMLS')
 
 # =============================================================================
 # CORS Configuration

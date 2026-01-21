@@ -3,27 +3,39 @@ import logging
 import hashlib
 import hmac
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from django.conf import settings
 from django.core.cache import cache
+import threading
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-class LoneWolfMLSService:
+
+class ParagonMLSService:
     """
-    Service class for fetching MLS listings from Lone Wolf Real Estate Technologies API.
-    Implements authentication and data retrieval from Lone Wolf WolfConnect API.
+    Service class for fetching MLS listings from Paragon OData API (PrimeMLS).
+    Implements OAuth 2.0 client_credentials flow and OData queries.
+    
+    API Documentation: https://vendorsupport.paragonrels.com/
+    Uses RESO-mapped data from /DD1.7 endpoint.
     """
 
     def __init__(self):
-        """Initialize Lone Wolf API client with credentials from Django settings"""
+        """Initialize Paragon API client with credentials from Django settings"""
         # Get credentials from Django settings
-        self.api_token = getattr(settings, 'LONE_WOLF_API_TOKEN', None)
-        self.client_code = getattr(settings, 'LONE_WOLF_CLIENT_CODE', None)
-        self.secret_key = getattr(settings, 'LONE_WOLF_SECRET_KEY', None)
-        self.base_url = getattr(settings, 'LONE_WOLF_BASE_URL', 'https://api.lwolf.com/v1')
+        self.client_id = getattr(settings, 'PARAGON_CLIENT_ID', None)
+        self.client_secret = getattr(settings, 'PARAGON_CLIENT_SECRET', None)
+        self.token_url = getattr(settings, 'PARAGON_TOKEN_URL', 
+            'https://PrimeMLS.paragonrels.com/OData/PrimeMLS/identity/connect/token')
+        self.base_url = getattr(settings, 'PARAGON_BASE_URL', 
+            'https://PrimeMLS.paragonrels.com/OData/PrimeMLS')
+        
+        # Token management
+        self._access_token = None
+        self._token_expires_at = None
+        self._token_lock = threading.Lock()
         
         # Cache timeout (5 minutes)
         self.cache_timeout = 300
@@ -36,370 +48,123 @@ class LoneWolfMLSService:
         })
         
         # Check if credentials are configured
-        if not all([self.api_token, self.client_code, self.secret_key]):
-            logger.warning("Lone Wolf API credentials not configured. Set LONE_WOLF_API_TOKEN, LONE_WOLF_CLIENT_CODE, and LONE_WOLF_SECRET_KEY in settings.")
+        # NOTE: Re-enabled after credentials configuration
+        if not all([self.client_id, self.client_secret]):
+            logger.warning("Paragon API credentials not configured. Set PARAGON_CLIENT_ID and PARAGON_CLIENT_SECRET in settings.")
             self.enabled = False
         else:
+            # Re-enabled - test with configured credentials
             self.enabled = True
-            logger.info("Lone Wolf MLS Service initialized successfully")
+            logger.info("Paragon MLS API enabled with configured credentials")
 
-    def _generate_auth_headers(self, method: str, path: str, body: str = '') -> Dict[str, str]:
+    def _get_access_token(self) -> Optional[str]:
         """
-        Generate authentication headers for Lone Wolf API requests.
-        
-        Content-MD5: base64 encoded MD5 hash of request body
-        Authorization: HMAC-SHA256 signature
+        Get a valid access token, refreshing if necessary.
+        Uses OAuth 2.0 client_credentials grant.
         """
-        # Generate Content-MD5 hash
-        if body:
-            content_md5 = base64.b64encode(hashlib.md5(body.encode()).digest()).decode()
-        else:
-            content_md5 = ''
-        
-        # Generate date header
-        date = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
-        
-        # Create signature string
-        signature_string = f"{method}\n{content_md5}\napplication/json\n{date}\n{path}"
-        
-        # Generate HMAC-SHA256 signature
-        signature = base64.b64encode(
-            hmac.new(
-                self.secret_key.encode(),
-                signature_string.encode(),
-                hashlib.sha256
-            ).digest()
-        ).decode()
-        
-        # Create authorization header
-        authorization = f"{self.client_code}:{self.api_token}:{signature}"
-        
-        return {
-            'Content-MD5': content_md5,
-            'Date': date,
-            'Authorization': authorization,
-        }
+        with self._token_lock:
+            # Check if we have a valid cached token
+            if self._access_token and self._token_expires_at:
+                if datetime.utcnow() < self._token_expires_at - timedelta(seconds=60):
+                    return self._access_token
+            
+            # Request new token
+            try:
+                print(f"[DEBUG] Requesting token from: {self.token_url}")
+                print(f"[DEBUG] Client ID: {self.client_id}")
+                response = requests.post(
+                    self.token_url,
+                    data={
+                        'grant_type': 'client_credentials',
+                        'client_id': self.client_id,
+                        'client_secret': self.client_secret,
+                        'scope': 'OData',
+                    },
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                    timeout=30
+                )
+                
+                print(f"[DEBUG] Token response status: {response.status_code}")
+                print(f"[DEBUG] Token response body: {response.text[:200]}")
+                
+                if response.status_code != 200:
+                    logger.error(f"Token request failed: {response.status_code} - {response.text}")
+                    print(f"[ERROR] Token request failed: {response.text}")
+                    return None
+                
+                token_data = response.json()
+                
+                self._access_token = token_data.get('access_token')
+                expires_in = token_data.get('expires_in', 3600)
+                self._token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+                
+                logger.info("Successfully obtained Paragon access token")
+                print(f"[DEBUG] Token obtained, expires in {expires_in}s")
+                return self._access_token
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to obtain Paragon access token: {e}")
+                print(f"[ERROR] Token request exception: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    logger.error(f"Response: {e.response.text}")
+                    print(f"[ERROR] Response: {e.response.text}")
+                return None
 
     def _make_request(
         self,
-        method: str,
         endpoint: str,
         params: Dict = None,
-        data: Dict = None
+        use_reso: bool = True
     ) -> Optional[Dict]:
-        """Make authenticated request to Lone Wolf API"""
+        """
+        Make authenticated OData request to Paragon API.
+        
+        Args:
+            endpoint: OData resource name (e.g., 'Property', 'Media')
+            params: OData query parameters
+            use_reso: If True, use DD1.7 (RESO-mapped), else use Paragon native
+        """
         if not self.enabled:
-            logger.error("Lone Wolf API not enabled. Check credentials.")
+            logger.error("Paragon API not enabled. Check credentials.")
             return None
         
-        url = f"{self.base_url}/{endpoint}"
-        path = f"/{endpoint}"
+        access_token = self._get_access_token()
+        if not access_token:
+            logger.error("Could not obtain access token")
+            return None
         
-        # Prepare request body
-        body = ''
-        if data:
-            import json
-            body = json.dumps(data)
+        # Build URL: /DD1.7/Property or /Paragon/Property
+        # Check if data source is already in base_url to avoid duplication
+        data_source = 'DD1.7' if use_reso else 'Paragon'
+        if data_source in self.base_url:
+            url = f"{self.base_url}/{endpoint}"
+        else:
+            url = f"{self.base_url}/{data_source}/{endpoint}"
         
-        # Generate auth headers
-        auth_headers = self._generate_auth_headers(method, path, body)
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Accept': 'application/json',
+        }
         
         try:
-            response = self.session.request(
-                method=method,
-                url=url,
+            response = self.session.get(
+                url,
                 params=params,
-                data=body if body else None,
-                headers=auth_headers,
+                headers=headers,
                 timeout=30
             )
             
-            logger.debug(f"Lone Wolf API Request: {method} {url}")
+            logger.debug(f"Paragon API Request: {url}")
+            logger.debug(f"Params: {params}")
             logger.debug(f"Response Status: {response.status_code}")
             
             response.raise_for_status()
             return response.json() if response.content else {}
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Lone Wolf API request failed: {e}")
-            if hasattr(e.response, 'text'):
+            logger.error(f"Paragon API request failed: {e}")
+            if hasattr(e, 'response') and e.response is not None:
                 logger.error(f"Response: {e.response.text}")
-            return None
-
-    def get_transactions(
-        self,
-        filters: Dict = None,
-        top: int = 20,
-        skip: int = 0,
-        orderby: str = None
-    ) -> List[Dict]:
-        """
-        Get real estate transactions (property listings).
-        
-        Args:
-            filters: OData filter expression dict
-            top: Number of results to return
-            skip: Number of results to skip (pagination)
-            orderby: Field to order results by
-        
-        Returns:
-            List of transaction objects
-        """
-        cache_key = f"lonewolf:transactions:{filters}:{top}:{skip}:{orderby}"
-        cached = cache.get(cache_key)
-        
-        if cached:
-            logger.debug("Returning cached transactions")
-            return cached
-        
-        # Build OData query parameters
-        params = {
-            '$top': top,
-            '$skip': skip,
-        }
-        
-        if orderby:
-            params['$orderby'] = orderby
-        
-        if filters:
-            # Build OData filter string
-            filter_parts = []
-            for key, value in filters.items():
-                if isinstance(value, str):
-                    filter_parts.append(f"{key} eq '{value}'")
-                else:
-                    filter_parts.append(f"{key} eq {value}")
-            
-            if filter_parts:
-                params['$filter'] = ' and '.join(filter_parts)
-        
-        response = self._make_request('GET', 'transactions', params=params)
-        
-        if response:
-            results = response if isinstance(response, list) else response.get('value', [])
-            cache.set(cache_key, results, self.cache_timeout)
-            return results
-        
-        return []
-
-    def get_transaction_detail(self, transaction_id: str) -> Optional[Dict]:
-        """
-        Get detailed information for a specific transaction.
-        
-        Args:
-            transaction_id: Lone Wolf transaction ID
-        
-        Returns:
-            Transaction details dict
-        """
-        cache_key = f"lonewolf:transaction:{transaction_id}"
-        cached = cache.get(cache_key)
-        
-        if cached:
-            return cached
-        
-        response = self._make_request('GET', f'transactions/{transaction_id}')
-        
-        if response:
-            cache.set(cache_key, response, self.cache_timeout)
-            return response
-        
-        return None
-
-    def get_members(self, top: int = 100, skip: int = 0, filters: Dict = None) -> List[Dict]:
-        """
-        Get real estate agents/members.
-        
-        Args:
-            top: Number of results
-            skip: Skip count for pagination
-            filters: OData filters
-        
-        Returns:
-            List of member objects
-        """
-        params = {
-            '$top': top,
-            '$skip': skip,
-        }
-        
-        if filters:
-            filter_parts = []
-            for key, value in filters.items():
-                if isinstance(value, str):
-                    filter_parts.append(f"{key} eq '{value}'")
-                else:
-                    filter_parts.append(f"{key} eq {value}")
-            
-            if filter_parts:
-                params['$filter'] = ' and '.join(filter_parts)
-        
-        response = self._make_request('GET', 'members', params=params)
-        
-        if response:
-            return response if isinstance(response, list) else response.get('value', [])
-        
-        return []
-
-    def get_property_types(self) -> List[Dict]:
-        """Get all configured property types"""
-        cache_key = "lonewolf:property_types"
-        cached = cache.get(cache_key)
-        
-        if cached:
-            return cached
-        
-        response = self._make_request('GET', 'propertytypes')
-        
-        if response:
-            results = response if isinstance(response, list) else response.get('value', [])
-            cache.set(cache_key, results, 3600)  # Cache for 1 hour
-            return results
-        
-        return []
-
-    def search_listings(
-        self,
-        city: str = None,
-        state: str = None,
-        zip_code: str = None,
-        min_price: float = None,
-        max_price: float = None,
-        property_type: str = None,
-        status: str = 'Open',
-        page: int = 1,
-        per_page: int = 20
-    ) -> Dict[str, Any]:
-        """
-        Search for property listings with filters.
-        
-        Returns standardized format for compatibility with existing views.
-        """
-        skip = (page - 1) * per_page
-        
-        # Build filters
-        filters = {}
-        
-        if status:
-            filters['Status'] = status
-        
-        # Build OData filter for price range
-        filter_parts = []
-        
-        if min_price:
-            filter_parts.append(f"SellPrice ge {min_price}")
-        if max_price:
-            filter_parts.append(f"SellPrice le {max_price}")
-        
-        # Get transactions
-        transactions = self.get_transactions(
-            filters=filters if filters else None,
-            top=per_page,
-            skip=skip,
-            orderby='SellPrice asc'
-        )
-        
-        # Transform to standard format
-        results = []
-        for transaction in transactions:
-            listing = self._transform_transaction_to_listing(transaction)
-            
-            # Apply additional filters in Python (since OData may be limited)
-            if city and listing.get('city', '').lower() != city.lower():
-                continue
-            if state and listing.get('state', '').lower() != state.lower():
-                continue
-            if zip_code and listing.get('zip_code') != zip_code:
-                continue
-            
-            results.append(listing)
-        
-        total_pages = (len(results) + per_page - 1) // per_page if results else 1
-        
-        return {
-            'results': results[:per_page],
-            'total': len(results),
-            'page': page,
-            'per_page': per_page,
-            'total_pages': total_pages,
-            'source': 'lone_wolf'
-        }
-
-    def _transform_transaction_to_listing(self, transaction: Dict) -> Dict:
-        """Transform Lone Wolf transaction to standardized listing format"""
-        mls_address = transaction.get('MLSAddress', {})
-        property_type_obj = transaction.get('PropertyType', {})
-        
-        return {
-            'mls_number': transaction.get('MLSNumber', transaction.get('Number', '')),
-            'title': f"{mls_address.get('StreetNumber', '')} {mls_address.get('StreetName', '')}".strip(),
-            'address': f"{mls_address.get('StreetNumber', '')} {mls_address.get('StreetName', '')} {mls_address.get('Unit', '')}".strip(),
-            'city': mls_address.get('City', ''),
-            'state': mls_address.get('ProvinceCode', ''),
-            'zip_code': mls_address.get('PostalCode', ''),
-            'price': float(transaction.get('SellPrice', 0)),
-            'property_type': property_type_obj.get('Name', 'Unknown'),
-            'status': transaction.get('Status', 'Unknown'),
-            'description': transaction.get('LegalDescription', ''),
-            'created_at': transaction.get('CreatedTimestamp', ''),
-            'updated_at': transaction.get('ModifiedTimestamp', ''),
-            'source': 'lone_wolf',
-            'id': transaction.get('Id'),
-        }
-
-
-class MLSService:
-    """
-    Service class for fetching MLS listings from public APIs.
-    Supports public MLS providers.
-    """
-
-    # Public MLS API Configuration (replace this URL with the actual public MLS API URL)
-    PUBLIC_MLS_BASE_URL = 'http://10.10.13.27:8005/api/v1'  # Example, replace with actual public API URL
-
-    # Cache settings
-    CACHE_TIMEOUT = 300  # 5 minutes
-
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'Accept': 'application/json',
-        })
-
-    def _make_request(
-        self,
-        method: str,
-        endpoint: str,
-        params: Dict = None,
-        data: Dict = None
-    ) -> Optional[Dict]:
-        """
-        Make HTTP request to public MLS API and log the response for debugging.
-        """
-        url = f"{self.PUBLIC_MLS_BASE_URL}/{endpoint}"
-
-        try:
-            # Send the API request
-            response = self.session.request(
-                method=method,
-                url=url,
-                params=params,
-                json=data,
-                timeout=30
-            )
-            
-            # Log request details and response for debugging
-            logger.debug(f"Request URL: {url}")
-            logger.debug(f"Request Params: {params}")
-            logger.debug(f"Response Status Code: {response.status_code}")
-            logger.debug(f"Response Body: {response.text}")
-
-            # If the request was successful, return the JSON response
-            response.raise_for_status()
-            return response.json()
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"MLS API request failed: {e}")
             return None
 
     def get_listings(
@@ -419,86 +184,479 @@ class MLSService:
         sort_order: str = 'asc'
     ) -> Dict[str, Any]:
         """
-        Fetch MLS listings with filters.
-
-        Returns:
-            Dict with 'results', 'total', 'page', 'per_page'
+        Fetch property listings from Paragon OData API.
+        
+        Returns standardized format:
+        {
+            'results': [...],
+            'total': int,
+            'page': int,
+            'per_page': int,
+            'total_pages': int,
+            'source': 'paragon_mls'
+        }
         """
         # Build cache key
-        cache_key = f"mls_listings:{city}:{state}:{zip_code}:{min_price}:{max_price}:{bedrooms}:{bathrooms}:{property_type}:{status}:{page}:{per_page}"
-
+        cache_key = f"paragon:listings:{city}:{state}:{zip_code}:{min_price}:{max_price}:{bedrooms}:{bathrooms}:{property_type}:{status}:{page}:{per_page}:{sort_by}:{sort_order}"
+        
         # Try cache first
         cached = cache.get(cache_key)
         if cached:
-            logger.debug("Returning cached results")
+            logger.debug("Returning cached Paragon results")
             return cached
-
-        # Build query parameters
+        
+        # Build OData query parameters
+        skip = (page - 1) * per_page
         params = {
+            '$top': per_page,
+            '$skip': skip,
+            '$count': 'true',  # Request total count
+        }
+        
+        # Build $orderby clause
+        sort_field_map = {
+            'price': 'ListPrice',
+            'created_at': 'OnMarketDate',
+            'bedrooms': 'BedroomsTotal',
+            'square_feet': 'LivingArea',
+        }
+        odata_sort_field = sort_field_map.get(sort_by, 'ListPrice')
+        params['$orderby'] = f"{odata_sort_field} {sort_order}"
+        
+        # Build $filter clause
+        filter_parts = []
+        
+        # Status filter (map to RESO StandardStatus)
+        status_map = {
+            'for_sale': "StandardStatus eq 'Active'",
+            'active': "StandardStatus eq 'Active'",
+            'pending': "StandardStatus eq 'Pending'",
+            'sold': "StandardStatus eq 'Closed'",
+        }
+        if status and status in status_map:
+            filter_parts.append(status_map[status])
+        
+        # Location filters
+        if city:
+            filter_parts.append(f"contains(City, '{city}')")
+        if state:
+            filter_parts.append(f"StateOrProvince eq '{state}'")
+        if zip_code:
+            filter_parts.append(f"PostalCode eq '{zip_code}'")
+        
+        # Price range
+        if min_price:
+            filter_parts.append(f"ListPrice ge {min_price}")
+        if max_price:
+            filter_parts.append(f"ListPrice le {max_price}")
+        
+        # Bedrooms/Bathrooms
+        if bedrooms:
+            filter_parts.append(f"BedroomsTotal ge {bedrooms}")
+        if bathrooms:
+            filter_parts.append(f"BathroomsFull ge {bathrooms}")
+        
+        # Property type (map to RESO PropertyType)
+        property_type_map = {
+            'house': 'Residential',
+            'residential': 'Residential',
+            'condo': 'Condominium',
+            'townhouse': 'Townhouse',
+            'land': 'Land',
+            'commercial': 'Commercial',
+            'apartment': 'Residential Income',
+        }
+        if property_type and property_type.lower() in property_type_map:
+            filter_parts.append(f"PropertyType eq '{property_type_map[property_type.lower()]}'")
+        
+        if filter_parts:
+            params['$filter'] = ' and '.join(filter_parts)
+        
+        # Select specific fields to optimize response
+        params['$select'] = ','.join([
+            'ListingKey', 'ListingId', 'ListPrice', 'OriginalListPrice',
+            'UnparsedAddress', 'StreetNumber', 'StreetName', 'StreetSuffix',
+            'City', 'StateOrProvince', 'PostalCode', 'Country',
+            'BedroomsTotal', 'BathroomsFull', 'BathroomsTotalInteger',
+            'LivingArea', 'LotSizeAcres', 'LotSizeSquareFeet',
+            'PropertyType', 'PropertySubType', 'StandardStatus',
+            'PublicRemarks', 'PrivateRemarks',
+            'OnMarketDate', 'ModificationTimestamp', 'ListAgentFullName',
+            'ListAgentEmail', 'ListAgentDirectPhone', 'ListOfficeName',
+        ])
+        
+        # Make API request
+        response = self._make_request('Property', params=params)
+        
+        if not response:
+            logger.error("No response from Paragon API, returning empty results")
+            return {
+                'results': [],
+                'total': 0,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': 0,
+                'source': 'paragon_mls'
+            }
+        
+        # Parse OData response
+        properties = response.get('value', [])
+        total_count = response.get('@odata.count', len(properties))
+        
+        # Transform to standardized format
+        results = []
+        for prop in properties:
+            listing = self._transform_property_to_listing(prop)
+            results.append(listing)
+        
+        # Fetch photos for listings (batch request)
+        self._attach_photos_to_listings(results)
+        
+        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 0
+        
+        result = {
+            'results': results,
+            'total': total_count,
             'page': page,
             'per_page': per_page,
-            'sort_by': sort_by,
-            'sort_order': sort_order,
+            'total_pages': total_pages,
+            'source': 'paragon_mls'
+        }
+        
+        # Cache the result
+        cache.set(cache_key, result, self.cache_timeout)
+        
+        return result
+
+    def _transform_property_to_listing(self, prop: Dict) -> Dict:
+        """Transform Paragon/RESO property to standardized listing format"""
+        # Build address from components
+        address_parts = [
+            prop.get('StreetNumber', ''),
+            prop.get('StreetName', ''),
+            prop.get('StreetSuffix', ''),
+        ]
+        address = ' '.join(filter(None, address_parts)).strip()
+        if not address:
+            address = prop.get('UnparsedAddress', '')
+        
+        # Map status
+        status_map = {
+            'Active': 'for_sale',
+            'Pending': 'pending',
+            'Closed': 'sold',
+            'Withdrawn': 'withdrawn',
+            'Expired': 'expired',
+        }
+        reso_status = prop.get('StandardStatus', 'Active')
+        status = status_map.get(reso_status, 'for_sale')
+        
+        return {
+            'mls_number': prop.get('ListingKey') or prop.get('ListingId', ''),
+            'title': address or 'Property Listing',
+            'address': address,
+            'city': prop.get('City', ''),
+            'state': prop.get('StateOrProvince', ''),
+            'zip_code': prop.get('PostalCode', ''),
+            'price': float(prop.get('ListPrice', 0)),
+            'original_price': float(prop.get('OriginalListPrice', 0)) if prop.get('OriginalListPrice') else None,
+            'bedrooms': prop.get('BedroomsTotal'),
+            'bathrooms': prop.get('BathroomsFull') or prop.get('BathroomsTotalInteger'),
+            'square_feet': prop.get('LivingArea'),
+            'lot_size_acres': prop.get('LotSizeAcres'),
+            'lot_size_sqft': prop.get('LotSizeSquareFeet'),
+            'property_type': prop.get('PropertyType', 'Unknown'),
+            'property_subtype': prop.get('PropertySubType'),
             'status': status,
+            'description': prop.get('PublicRemarks', ''),
+            'agent_name': prop.get('ListAgentFullName', ''),
+            'agent_email': prop.get('ListAgentEmail', ''),
+            'agent_phone': prop.get('ListAgentDirectPhone', ''),
+            'office_name': prop.get('ListOfficeName', ''),
+            'on_market_date': prop.get('OnMarketDate', ''),
+            'updated_at': prop.get('ModificationTimestamp', ''),
+            'created_at': prop.get('OnMarketDate', ''),
+            'photos': [],  # Will be populated by _attach_photos_to_listings
+            'photo_url': None,  # Primary photo URL
+            'source': 'paragon_mls',
         }
 
-        if city:
-            params['city'] = city
-        if state:
-            params['state'] = state
-        if zip_code:
-            params['zip_code'] = zip_code
-        if min_price:
-            params['min_price'] = min_price
-        if max_price:
-            params['max_price'] = max_price
-        if bedrooms:
-            params['bedrooms_min'] = bedrooms
-        if bathrooms:
-            params['bathrooms_min'] = bathrooms
-        if property_type:
-            params['property_type'] = property_type
-
-        # Make API request
-        response = self._make_request('GET', 'listings', params=params)
-
-        if response:
-            # Cache the response for subsequent requests
-            cache.set(cache_key, response, self.CACHE_TIMEOUT)
-            return response
+    def _attach_photos_to_listings(self, listings: List[Dict]) -> None:
+        """Fetch and attach photos to listings"""
+        if not listings:
+            return
         
-        # If public API fails, return an empty response
-        logger.error("No data returned from public MLS API")
-        return {"results": [], "total": 0, "page": page, "per_page": per_page, "total_pages": 0, "source": "public"}
-    
+        # Get listing keys for batch photo request
+        listing_keys = [l['mls_number'] for l in listings if l.get('mls_number')]
+        
+        if not listing_keys:
+            return
+        
+        # Build filter for batch photo request
+        # Limit to first 10 listings for performance
+        batch_keys = listing_keys[:10]
+        filter_parts = [f"ResourceRecordKey eq '{key}'" for key in batch_keys]
+        filter_str = ' or '.join(filter_parts)
+        
+        params = {
+            '$filter': f"({filter_str}) and MediaCategory eq 'Photo'",
+            '$orderby': 'Order asc',
+            '$select': 'ResourceRecordKey,MediaURL,Order,ShortDescription',
+            '$top': 100,  # Limit total photos
+        }
+        
+        response = self._make_request('Media', params=params)
+        
+        if not response:
+            return
+        
+        media_items = response.get('value', [])
+        
+        # Group photos by listing key
+        photos_by_listing = {}
+        for media in media_items:
+            key = media.get('ResourceRecordKey')
+            if key not in photos_by_listing:
+                photos_by_listing[key] = []
+            photos_by_listing[key].append({
+                'url': media.get('MediaURL', ''),
+                'order': media.get('Order', 0),
+                'caption': media.get('ShortDescription', ''),
+            })
+        
+        # Attach photos to listings
+        for listing in listings:
+            key = listing.get('mls_number')
+            if key in photos_by_listing:
+                photos = sorted(photos_by_listing[key], key=lambda x: x.get('order', 0))
+                listing['photos'] = photos
+                if photos:
+                    listing['photo_url'] = photos[0].get('url')
+
     def get_listing_detail(self, mls_number: str) -> Optional[Dict]:
         """
         Get detailed information for a specific MLS listing.
-
+        
         Args:
-            mls_number: The MLS listing number
+            mls_number: The MLS listing key/ID
             
         Returns:
             Dict with listing details or None
         """
-        cache_key = f"mls_listing:{mls_number}"
+        cache_key = f"paragon:listing:{mls_number}"
         cached = cache.get(cache_key)
-
+        
         if cached:
             logger.debug("Returning cached listing details")
             return cached
+        
+        # Query by ListingKey
+        params = {
+            '$filter': f"ListingKey eq '{mls_number}'",
+        }
+        
+        response = self._make_request('Property', params=params)
+        
+        if not response or not response.get('value'):
+            logger.error(f"Listing {mls_number} not found in Paragon API")
+            return None
+        
+        properties = response.get('value', [])
+        if not properties:
+            return None
+        
+        prop = properties[0]
+        listing = self._transform_property_to_listing(prop)
+        
+        # Fetch all photos for this listing
+        self._attach_photos_to_listings([listing])
+        
+        # Cache the result
+        cache.set(cache_key, listing, self.cache_timeout)
+        
+        return listing
 
-        response = self._make_request('GET', f'listings/{mls_number}', params={})
+    def search_listings(
+        self,
+        query: str = None,
+        location: str = None,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Dict[str, Any]:
+        """
+        Search listings by keyword or address.
+        
+        Args:
+            query: Search keyword (address, neighborhood, etc.)
+            location: Optional location filter
+            page: Page number
+            per_page: Results per page
+            
+        Returns:
+            Dict with search results
+        """
+        if not query:
+            return {
+                'results': [],
+                'total': 0,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': 0,
+                'source': 'paragon_mls'
+            }
+        
+        # Build OData filter for text search
+        skip = (page - 1) * per_page
+        
+        # Search in address fields
+        filter_parts = [
+            f"contains(UnparsedAddress, '{query}')",
+            f"contains(City, '{query}')",
+            f"contains(PublicRemarks, '{query}')",
+        ]
+        
+        params = {
+            '$filter': f"({' or '.join(filter_parts)}) and StandardStatus eq 'Active'",
+            '$top': per_page,
+            '$skip': skip,
+            '$count': 'true',
+            '$orderby': 'ListPrice asc',
+        }
+        
+        if location:
+            # Add location filter
+            params['$filter'] += f" and (contains(City, '{location}') or contains(StateOrProvince, '{location}') or PostalCode eq '{location}')"
+        
+        response = self._make_request('Property', params=params)
+        
+        if not response:
+            return {
+                'results': [],
+                'total': 0,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': 0,
+                'source': 'paragon_mls'
+            }
+        
+        properties = response.get('value', [])
+        total_count = response.get('@odata.count', len(properties))
+        
+        results = [self._transform_property_to_listing(p) for p in properties]
+        self._attach_photos_to_listings(results)
+        
+        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 0
+        
+        return {
+            'results': results,
+            'total': total_count,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': total_pages,
+            'source': 'paragon_mls'
+        }
 
-        if response:
-            # Cache the response for subsequent requests
-            cache.set(cache_key, response, self.CACHE_TIMEOUT)
-            return response
+    def get_featured_listings(self, limit: int = 10) -> Dict[str, Any]:
+        """
+        Get featured/promoted listings (highest priced active listings).
+        
+        Args:
+            limit: Number of listings to return
+            
+        Returns:
+            Dict with featured listings
+        """
+        params = {
+            '$filter': "StandardStatus eq 'Active'",
+            '$top': limit,
+            '$orderby': 'ListPrice desc',
+            '$count': 'true',
+        }
+        
+        response = self._make_request('Property', params=params)
+        
+        if not response:
+            return {
+                'results': [],
+                'total': 0,
+                'source': 'paragon_mls'
+            }
+        
+        properties = response.get('value', [])
+        results = [self._transform_property_to_listing(p) for p in properties]
+        self._attach_photos_to_listings(results)
+        
+        return {
+            'results': results,
+            'total': len(results),
+            'source': 'paragon_mls'
+        }
 
-        # If public API fails, return empty or sample data
-        logger.error(f"Listing {mls_number} not found in public MLS API")
-        return {"mls_number": mls_number, "details": "No details found", "source": "public"}
+    def get_nearby_listings(
+        self,
+        latitude: float,
+        longitude: float,
+        radius_miles: float = 10,
+        limit: int = 20
+    ) -> Dict[str, Any]:
+        """
+        Get listings near a specific location.
+        
+        Note: Paragon OData may not support geospatial queries directly.
+        This returns active listings sorted by price as a fallback.
+        
+        Args:
+            latitude: Latitude coordinate
+            longitude: Longitude coordinate  
+            radius_miles: Search radius in miles
+            limit: Number of listings to return
+            
+        Returns:
+            Dict with nearby listings
+        """
+        # Note: OData geospatial queries require OData 4.0 geo.distance
+        # If not supported, return featured active listings instead
+        logger.warning("Geospatial query not fully implemented, returning active listings")
+        
+        return self.get_featured_listings(limit=limit)
 
-# Service instances - use lone_wolf_service for real MLS data
-lone_wolf_service = LoneWolfMLSService()
-mls_service = MLSService()  # Fallback for generic APIs
+
+# Keep legacy service for backwards compatibility
+class LoneWolfMLSService:
+    """
+    Legacy Lone Wolf service - kept for backwards compatibility.
+    Paragon service is now the primary MLS data source.
+    """
+    def __init__(self):
+        self.enabled = False
+        logger.info("LoneWolfMLSService is deprecated. Using ParagonMLSService instead.")
+
+
+class MLSService:
+    """
+    Legacy MLSService wrapper - redirects to Paragon service.
+    """
+    def __init__(self):
+        self._paragon = ParagonMLSService()
+    
+    def get_listings(self, **kwargs):
+        return self._paragon.get_listings(**kwargs)
+    
+    def get_listing_detail(self, mls_number: str):
+        return self._paragon.get_listing_detail(mls_number)
+    
+    def search_listings(self, **kwargs):
+        return self._paragon.search_listings(**kwargs)
+    
+    def get_featured_listings(self, limit: int = 10):
+        return self._paragon.get_featured_listings(limit)
+    
+    def get_nearby_listings(self, **kwargs):
+        return self._paragon.get_nearby_listings(**kwargs)
+
+
+# Service instances
+paragon_mls_service = ParagonMLSService()
+mls_service = MLSService()  # Wraps Paragon for compatibility with views
+lone_wolf_service = LoneWolfMLSService()  # Deprecated
+

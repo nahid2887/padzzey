@@ -34,13 +34,15 @@ services:
   web:
     build: .
     container_name: pdezzy_web
+    env_file:
+      - .env
     command: sh -c "python manage.py migrate && python manage.py collectstatic --noinput && daphne -b 0.0.0.0 -p 8006 pdezzy.asgi:application"
     volumes:
       - ./pdezzy:/app
       - static_volume:/app/static
       - media_volume:/app/media
-    expose:
-      - 8006
+    ports:
+      - "8006:8006"
     environment:
       - DEBUG=${DEBUG:-False}
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
@@ -53,6 +55,10 @@ services:
       - DB_PORT=5432
       - REDIS_URL=redis://redis:6379/0
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-pineriverapp.com,www.pineriverapp.com}
+      - PARAGON_CLIENT_ID=${PARAGON_CLIENT_ID}
+      - PARAGON_CLIENT_SECRET=${PARAGON_CLIENT_SECRET}
+      - PARAGON_TOKEN_URL=${PARAGON_TOKEN_URL}
+      - PARAGON_BASE_URL=${PARAGON_BASE_URL}
     depends_on:
       db:
         condition: service_healthy
