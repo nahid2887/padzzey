@@ -451,6 +451,9 @@ class MLSSearchParamsSerializer(serializers.Serializer):
     city = serializers.CharField(required=False, help_text="Filter by city")
     state = serializers.CharField(required=False, help_text="Filter by state")
     zip_code = serializers.CharField(required=False, help_text="Filter by ZIP code")
+    mls_number = serializers.CharField(required=False, help_text="Filter by MLS number")
+    title = serializers.CharField(required=False, help_text="Filter by title")
+    address = serializers.CharField(required=False, help_text="Filter by address")
     min_price = serializers.DecimalField(
         max_digits=12, decimal_places=2, 
         required=False, 

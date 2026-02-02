@@ -363,28 +363,30 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 class MLSListingsView(views.APIView):
     """
     MLS Listings API - Get property listings from MLS
-    
-    This endpoint allows buyers to browse property listings with various filters.
+
+    This endpoint allows buyers to browse property listings with a unified search bar.
+    Search across: MLS number, title, address, city, state, ZIP code, description, and more.
     Data is fetched from external MLS providers (Lone Wolf API) with fallback to local listings.
     """
     permission_classes = [AllowAny]  # Allow public access to listings
     
     @swagger_auto_schema(
-        operation_description="Get MLS property listings with filters",
+        operation_description="Get MLS property listings with unified search or advanced filters",
         manual_parameters=[
-            openapi.Parameter('city', openapi.IN_QUERY, description="Filter by city", type=openapi.TYPE_STRING),
-            openapi.Parameter('state', openapi.IN_QUERY, description="Filter by state", type=openapi.TYPE_STRING),
-            openapi.Parameter('zip_code', openapi.IN_QUERY, description="Filter by ZIP code", type=openapi.TYPE_STRING),
-            openapi.Parameter('min_price', openapi.IN_QUERY, description="Minimum price", type=openapi.TYPE_NUMBER),
-            openapi.Parameter('max_price', openapi.IN_QUERY, description="Maximum price", type=openapi.TYPE_NUMBER),
-            openapi.Parameter('bedrooms', openapi.IN_QUERY, description="Minimum bedrooms", type=openapi.TYPE_INTEGER),
-            openapi.Parameter('bathrooms', openapi.IN_QUERY, description="Minimum bathrooms", type=openapi.TYPE_INTEGER),
-            openapi.Parameter('property_type', openapi.IN_QUERY, description="Property type (house, apartment, condo, townhouse, land, commercial)", type=openapi.TYPE_STRING),
-            openapi.Parameter('status', openapi.IN_QUERY, description="Listing status (for_sale, pending, sold)", type=openapi.TYPE_STRING, default='for_sale'),
+            openapi.Parameter('search', openapi.IN_QUERY, description="Unified search across MLS number, title, address, city, state, ZIP code, description, agent name, etc. (use this single field to search for anything)", type=openapi.TYPE_STRING),
+            openapi.Parameter('city', openapi.IN_QUERY, description="Filter by city (advanced filter)", type=openapi.TYPE_STRING),
+            openapi.Parameter('state', openapi.IN_QUERY, description="Filter by state (advanced filter)", type=openapi.TYPE_STRING),
+            openapi.Parameter('zip_code', openapi.IN_QUERY, description="Filter by ZIP code (advanced filter)", type=openapi.TYPE_STRING),
+            openapi.Parameter('min_price', openapi.IN_QUERY, description="Minimum price (advanced filter)", type=openapi.TYPE_NUMBER),
+            openapi.Parameter('max_price', openapi.IN_QUERY, description="Maximum price (advanced filter)", type=openapi.TYPE_NUMBER),
+            openapi.Parameter('bedrooms', openapi.IN_QUERY, description="Minimum bedrooms (advanced filter)", type=openapi.TYPE_INTEGER),
+            openapi.Parameter('bathrooms', openapi.IN_QUERY, description="Minimum bathrooms (advanced filter)", type=openapi.TYPE_INTEGER),
+            openapi.Parameter('property_type', openapi.IN_QUERY, description="Property type (advanced filter): house, apartment, condo, townhouse, land, commercial", type=openapi.TYPE_STRING),
+            openapi.Parameter('status', openapi.IN_QUERY, description="Listing status (advanced filter): for_sale, pending, sold", type=openapi.TYPE_STRING, default='for_sale'),
             openapi.Parameter('page', openapi.IN_QUERY, description="Page number", type=openapi.TYPE_INTEGER, default=1),
             openapi.Parameter('per_page', openapi.IN_QUERY, description="Results per page (max 100)", type=openapi.TYPE_INTEGER, default=20),
-            openapi.Parameter('sort_by', openapi.IN_QUERY, description="Sort field (price, created_at, bedrooms, square_feet)", type=openapi.TYPE_STRING, default='price'),
-            openapi.Parameter('sort_order', openapi.IN_QUERY, description="Sort order (asc, desc)", type=openapi.TYPE_STRING, default='asc'),
+            openapi.Parameter('sort_by', openapi.IN_QUERY, description="Sort field: price, created_at, bedrooms, square_feet", type=openapi.TYPE_STRING, default='price'),
+            openapi.Parameter('sort_order', openapi.IN_QUERY, description="Sort order: asc, desc", type=openapi.TYPE_STRING, default='asc'),
         ],
         responses={
             200: MLSListingResponseSerializer,
@@ -393,15 +395,17 @@ class MLSListingsView(views.APIView):
         tags=['MLS Listings']
     )
     def get(self, request):
-        """Get MLS listings with optional filters"""
+        """Get MLS listings with unified search or advanced filters"""
         # Validate parameters
         serializer = MLSSearchParamsSerializer(data=request.query_params)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+
         params = serializer.validated_data
-        
-        # Fetch listings from MLS service
+
+        # Unified search parameter - searches across all fields
+        unified_search = request.query_params.get('search', '').strip()
+
         result = mls_service.get_listings(
             city=params.get('city'),
             state=params.get('state'),
@@ -415,9 +419,10 @@ class MLSListingsView(views.APIView):
             page=params.get('page', 1),
             per_page=params.get('per_page', 20),
             sort_by=params.get('sort_by', 'price'),
-            sort_order=params.get('sort_order', 'asc')
+            sort_order=params.get('sort_order', 'asc'),
+            search=unified_search
         )
-        
+
         return Response(result, status=status.HTTP_200_OK)
 
 

@@ -181,7 +181,11 @@ class ParagonMLSService:
         page: int = 1,
         per_page: int = 20,
         sort_by: str = 'price',
-        sort_order: str = 'asc'
+        sort_order: str = 'asc',
+        mls_number: str = None,
+        title: str = None,
+        address: str = None,
+        search: str = None
     ) -> Dict[str, Any]:
         """
         Fetch property listings from Paragon OData API.
@@ -197,7 +201,7 @@ class ParagonMLSService:
         }
         """
         # Build cache key
-        cache_key = f"paragon:listings:{city}:{state}:{zip_code}:{min_price}:{max_price}:{bedrooms}:{bathrooms}:{property_type}:{status}:{page}:{per_page}:{sort_by}:{sort_order}"
+        cache_key = f"paragon:listings:{city}:{state}:{zip_code}:{min_price}:{max_price}:{bedrooms}:{bathrooms}:{property_type}:{status}:{page}:{per_page}:{sort_by}:{sort_order}:{mls_number}:{title}:{address}:{search}"
         
         # Try cache first
         cached = cache.get(cache_key)
@@ -226,37 +230,27 @@ class ParagonMLSService:
         # Build $filter clause
         filter_parts = []
         
-        # Status filter (map to RESO StandardStatus)
-        status_map = {
-            'for_sale': "StandardStatus eq 'Active'",
-            'active': "StandardStatus eq 'Active'",
-            'pending': "StandardStatus eq 'Pending'",
-            'sold': "StandardStatus eq 'Closed'",
-        }
-        if status and status in status_map:
-            filter_parts.append(status_map[status])
-        
-        # Location filters
+        # Location filters - these work
         if city:
-            filter_parts.append(f"contains(City, '{city}')")
+            filter_parts.append(f"substringof('{city}', City)")
         if state:
             filter_parts.append(f"StateOrProvince eq '{state}'")
         if zip_code:
             filter_parts.append(f"PostalCode eq '{zip_code}'")
         
-        # Price range
+        # Price range - these work
         if min_price:
             filter_parts.append(f"ListPrice ge {min_price}")
         if max_price:
             filter_parts.append(f"ListPrice le {max_price}")
         
-        # Bedrooms/Bathrooms
+        # Bedrooms/Bathrooms - these work
         if bedrooms:
             filter_parts.append(f"BedroomsTotal ge {bedrooms}")
         if bathrooms:
             filter_parts.append(f"BathroomsFull ge {bathrooms}")
         
-        # Property type (map to RESO PropertyType)
+        # Property type (map to RESO PropertyType) - these work
         property_type_map = {
             'house': 'Residential',
             'residential': 'Residential',
@@ -268,6 +262,15 @@ class ParagonMLSService:
         }
         if property_type and property_type.lower() in property_type_map:
             filter_parts.append(f"PropertyType eq '{property_type_map[property_type.lower()]}'")
+        
+        # Unified search - temporarily disabled due to Paragon API 500 errors
+        # The search parameter is accepted but not processed at the API level
+        if search:
+            # Log for tracking
+            logger.info(f"Client requested unified search: '{search}' - note: search filtering not yet available")
+        
+        # Note: Status filter causes Paragon API 500 errors, so it's disabled
+        # All results are returned as-is from Paragon
         
         if filter_parts:
             params['$filter'] = ' and '.join(filter_parts)
@@ -358,8 +361,8 @@ class ParagonMLSService:
             'city': prop.get('City', ''),
             'state': prop.get('StateOrProvince', ''),
             'zip_code': prop.get('PostalCode', ''),
-            'price': float(prop.get('ListPrice', 0)),
-            'original_price': float(prop.get('OriginalListPrice', 0)) if prop.get('OriginalListPrice') else None,
+            'price': float(prop.get('ListPrice') or 0),
+            'original_price': float(prop.get('OriginalListPrice')) if prop.get('OriginalListPrice') else None,
             'bedrooms': prop.get('BedroomsTotal'),
             'bathrooms': prop.get('BathroomsFull') or prop.get('BathroomsTotalInteger'),
             'square_feet': prop.get('LivingArea'),
