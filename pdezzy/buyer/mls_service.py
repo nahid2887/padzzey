@@ -315,11 +315,22 @@ class ParagonMLSService:
         # Fetch photos for listings (batch request)
         self._attach_photos_to_listings(results)
         
-        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 0
+        # Client-side filtering for search parameter (since Paragon API has filtering limitations)
+        if search:
+            results = self._filter_results_by_search(results, search)
+        
+        # Recalculate total and pages after filtering
+        filtered_total = len(results)
+        total_pages = (filtered_total + per_page - 1) // per_page if filtered_total > 0 else 0
+        
+        # Apply pagination to filtered results
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        paginated_results = results[start_idx:end_idx]
         
         result = {
-            'results': results,
-            'total': total_count,
+            'results': paginated_results,
+            'total': filtered_total,
             'page': page,
             'per_page': per_page,
             'total_pages': total_pages,
@@ -330,6 +341,40 @@ class ParagonMLSService:
         cache.set(cache_key, result, self.cache_timeout)
         
         return result
+
+    def _filter_results_by_search(self, listings: List[Dict], search_term: str) -> List[Dict]:
+        """
+        Filter listings by search term. Searches across:
+        - MLS number
+        - Title/Address
+        - City, State, ZIP code
+        - Description/Remarks
+        - Agent name
+        - Office name
+        """
+        if not search_term:
+            return listings
+        
+        search_lower = search_term.lower().strip()
+        filtered = []
+        
+        for listing in listings:
+            # Check each field for a match (case-insensitive substring match)
+            if any([
+                search_lower in str(listing.get('mls_number', '')).lower(),
+                search_lower in str(listing.get('title', '')).lower(),
+                search_lower in str(listing.get('address', '')).lower(),
+                search_lower in str(listing.get('city', '')).lower(),
+                search_lower in str(listing.get('state', '')).lower(),
+                search_lower in str(listing.get('zip_code', '')).lower(),
+                search_lower in str(listing.get('description', '')).lower(),
+                search_lower in str(listing.get('agent_name', '')).lower(),
+                search_lower in str(listing.get('office_name', '')).lower(),
+            ]):
+                filtered.append(listing)
+        
+        logger.info(f"Search '{search_term}' filtered {len(listings)} results to {len(filtered)}")
+        return filtered
 
     def _transform_property_to_listing(self, prop: Dict) -> Dict:
         """Transform Paragon/RESO property to standardized listing format"""
