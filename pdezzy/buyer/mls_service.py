@@ -210,9 +210,13 @@ class ParagonMLSService:
             return cached
         
         # Build OData query parameters
-        skip = (page - 1) * per_page
+        # For client-side pagination with search filtering, fetch all data first then paginate locally
+        # This ensures we have enough data after filtering
+        fetch_per_page = 1000  # Fetch large batch to support pagination after filtering
+        skip = 0  # Always start from beginning since we'll paginate locally
+        
         params = {
-            '$top': per_page,
+            '$top': fetch_per_page,
             '$skip': skip,
             '$count': 'true',  # Request total count
         }

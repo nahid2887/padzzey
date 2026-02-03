@@ -383,8 +383,9 @@ class MLSListingsView(views.APIView):
             openapi.Parameter('bathrooms', openapi.IN_QUERY, description="Minimum bathrooms (advanced filter)", type=openapi.TYPE_INTEGER),
             openapi.Parameter('property_type', openapi.IN_QUERY, description="Property type (advanced filter): house, apartment, condo, townhouse, land, commercial", type=openapi.TYPE_STRING),
             openapi.Parameter('status', openapi.IN_QUERY, description="Listing status (advanced filter): for_sale, pending, sold", type=openapi.TYPE_STRING, default='for_sale'),
-            openapi.Parameter('page', openapi.IN_QUERY, description="Page number", type=openapi.TYPE_INTEGER, default=1),
-            openapi.Parameter('per_page', openapi.IN_QUERY, description="Results per page (max 100)", type=openapi.TYPE_INTEGER, default=20),
+            openapi.Parameter('page', openapi.IN_QUERY, description="Page number (default 1)", type=openapi.TYPE_INTEGER, default=1),
+            openapi.Parameter('per_page', openapi.IN_QUERY, description="Results per page (default 20, max 1000). Use per_page=1000 to get all results", type=openapi.TYPE_INTEGER, default=20),
+            openapi.Parameter('all', openapi.IN_QUERY, description="Set to 'true' to get ALL results at once without pagination (ignores page/per_page)", type=openapi.TYPE_STRING),
             openapi.Parameter('sort_by', openapi.IN_QUERY, description="Sort field: price, created_at, bedrooms, square_feet", type=openapi.TYPE_STRING, default='price'),
             openapi.Parameter('sort_order', openapi.IN_QUERY, description="Sort order: asc, desc", type=openapi.TYPE_STRING, default='asc'),
         ],
@@ -395,7 +396,15 @@ class MLSListingsView(views.APIView):
         tags=['MLS Listings']
     )
     def get(self, request):
-        """Get MLS listings with unified search or advanced filters"""
+        """Get MLS listings with unified search or advanced filters
+        
+        Examples:
+        - Get first 20 results: /api/v1/buyer/listings/
+        - Get all results: /api/v1/buyer/listings/?all=true
+        - Get 100 per page: /api/v1/buyer/listings/?per_page=100
+        - Get page 2: /api/v1/buyer/listings/?page=2&per_page=50
+        - Search with all results: /api/v1/buyer/listings/?search=manchester&all=true
+        """
         # Validate parameters
         serializer = MLSSearchParamsSerializer(data=request.query_params)
         if not serializer.is_valid():
@@ -405,6 +414,20 @@ class MLSListingsView(views.APIView):
 
         # Unified search parameter - searches across all fields
         unified_search = request.query_params.get('search', '').strip()
+        
+        # Check if user wants all results
+        get_all = request.query_params.get('all', '').lower() in ['true', '1', 'yes']
+        
+        # Determine per_page
+        per_page = params.get('per_page', 20)
+        if get_all:
+            # Return all results at once
+            per_page = 10000  # Large number to get everything
+            page = 1
+        else:
+            page = params.get('page', 1)
+            # Cap per_page at 1000 max
+            per_page = min(per_page, 1000)
 
         result = mls_service.get_listings(
             city=params.get('city'),
@@ -416,8 +439,8 @@ class MLSListingsView(views.APIView):
             bathrooms=params.get('bathrooms'),
             property_type=params.get('property_type'),
             status=params.get('status', 'for_sale'),
-            page=params.get('page', 1),
-            per_page=params.get('per_page', 20),
+            page=page,
+            per_page=per_page,
             sort_by=params.get('sort_by', 'price'),
             sort_order=params.get('sort_order', 'asc'),
             search=unified_search
