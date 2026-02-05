@@ -834,10 +834,15 @@ class ShowingAgreementResponseSerializer(serializers.Serializer):
     property_details = serializers.SerializerMethodField()
     
     def get_signature_url(self, obj):
-        """Return URL to download the signed agreement PDF"""
+        """Return media URL for the signed agreement PDF"""
         request = self.context.get('request')
-        if request and obj.id:
-            return request.build_absolute_uri(f'/api/v1/buyer/agreements/{obj.id}/download/agreement_{obj.id}.pdf')
+        if obj.signature:
+            try:
+                if request:
+                    return request.build_absolute_uri(f'/media/{obj.signature}')
+                return f'/media/{obj.signature}'
+            except:
+                return None
         return None
     
     def get_buyer_name(self, obj):

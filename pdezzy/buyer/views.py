@@ -1166,6 +1166,16 @@ class ShowingAgreementSignView(views.APIView):
         signature_content = signature_file.read()
         signature_base64 = base64.b64encode(signature_content).decode('utf-8')
         
+        # Also save file to media directory
+        from django.core.files.storage import default_storage
+        import os
+        
+        # Create filename
+        pdf_filename = f'agreements/{schedule.buyer.username}/agreement_{schedule.id}_{timezone.now().timestamp()}.pdf'
+        
+        # Save to media
+        file_path = default_storage.save(pdf_filename, ContentFile(signature_content))
+        
         # Create showing agreement
         agreement = ShowingAgreement.objects.create(
             showing_schedule=schedule,
@@ -1175,7 +1185,7 @@ class ShowingAgreementSignView(views.APIView):
             property_address=request.data.get('property_address', 
                 f"{schedule.property_listing.street_address}, {schedule.property_listing.city}"),
             showing_date=schedule.confirmed_date or schedule.requested_date,
-            signature=signature_base64,  # Store base64 encoded signature
+            signature=file_path,  # Store file path instead of base64
             agreement_accepted=True,
             signed_at=timezone.now()
         )
@@ -1663,60 +1673,3 @@ class BuyerAgreementDetailView(views.APIView):
             {'error': 'Agreement not found'},
             status=status.HTTP_404_NOT_FOUND
         )
-
-class BuyerAgreementDownloadView(views.APIView):
-    """
-    Download signed agreement PDF
-    Serves the base64 encoded signature/PDF as a downloadable file
-    """
-    permission_classes = [IsAuthenticated, IsBuyer]  # Keep auth required
-    
-    @swagger_auto_schema(
-        operation_description="Download signed agreement PDF - requires authentication",
-        responses={
-            200: openapi.Response(description="PDF file"),
-            401: "Unauthorized - No auth token provided",
-            404: "Not Found - Agreement not found"
-        },
-        tags=['Buyer Agreements']
-    )
-    def get(self, request, agreement_id, filename=None):
-        """Download agreement PDF"""
-        from .models import ShowingAgreement
-        import base64
-        from django.http import FileResponse, HttpResponse
-        
-        try:
-            agreement = ShowingAgreement.objects.get(id=agreement_id, buyer=request.user)
-        except ShowingAgreement.DoesNotExist:
-            return Response(
-                {'error': 'Agreement not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        if not agreement.signature:
-            return Response(
-                {'error': 'No signature/PDF available for this agreement'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        try:
-            # Decode base64 signature/PDF
-            signature_bytes = base64.b64decode(agreement.signature)
-            
-            # Use provided filename or generate default
-            download_filename = filename or f'agreement_{agreement.id}.pdf'
-            
-            # Create HTTP response with PDF content
-            response = HttpResponse(
-                signature_bytes,
-                content_type='application/pdf'
-            )
-            response['Content-Disposition'] = f'attachment; filename="{download_filename}"'
-            
-            return response
-        except Exception as e:
-            return Response(
-                {'error': f'Error downloading agreement: {str(e)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
