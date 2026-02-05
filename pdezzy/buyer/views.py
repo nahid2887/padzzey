@@ -1679,7 +1679,7 @@ class BuyerAgreementDownloadView(views.APIView):
         },
         tags=['Buyer Agreements']
     )
-    def get(self, request, agreement_id):
+    def get(self, request, agreement_id, filename=None):
         """Download agreement PDF"""
         from .models import ShowingAgreement
         import base64
@@ -1703,12 +1703,15 @@ class BuyerAgreementDownloadView(views.APIView):
             # Decode base64 signature/PDF
             signature_bytes = base64.b64decode(agreement.signature)
             
+            # Use provided filename or generate default
+            download_filename = filename or f'agreement_{agreement.id}.pdf'
+            
             # Create HTTP response with PDF content
             response = HttpResponse(
                 signature_bytes,
                 content_type='application/pdf'
             )
-            response['Content-Disposition'] = f'attachment; filename="agreement_{agreement.id}.pdf"'
+            response['Content-Disposition'] = f'attachment; filename="{download_filename}"'
             
             return response
         except Exception as e:

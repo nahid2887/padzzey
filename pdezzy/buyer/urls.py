@@ -92,6 +92,7 @@ urlpatterns = [
     # Buyer Agreements endpoints
     path('agreements/', BuyerAgreementListView.as_view(), name='buyer_agreements_list'),
     path('agreements/<int:agreement_id>/', BuyerAgreementDetailView.as_view(), name='buyer_agreement_detail'),
+    path('agreements/<int:agreement_id>/download/<str:filename>', BuyerAgreementDownloadView.as_view(), name='buyer_agreement_download_with_filename'),
     path('agreements/<int:agreement_id>/download/', BuyerAgreementDownloadView.as_view(), name='buyer_agreement_download'),
     
     # Legal Documents (GET only)
