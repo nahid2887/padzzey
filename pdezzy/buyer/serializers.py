@@ -6,7 +6,8 @@ from .models import (
     Buyer,
     BuyerNotification,
     ShowingAgreement,
-    SavedListing
+    SavedListing,
+    BuyerDocument
 )
 
 User = Buyer
@@ -214,17 +215,15 @@ class CustomTokenRefreshSerializer(TokenRefreshSerializer):
         ref_name = 'BuyerCustomTokenRefreshSerializer'
     
     def validate(self, attrs):
-        data = super().validate(attrs)
-        
-        # Get the refresh token and add user_type claim to the new access token
         refresh = RefreshToken(attrs['refresh'])
         
-        # Preserve or add the user_type claim
-        if 'user_type' not in refresh or refresh.get('user_type') != 'buyer':
+        # Ensure user_type claim is present
+        if 'user_type' not in refresh:
             refresh['user_type'] = 'buyer'
         
-        # Generate new access token with the user_type claim
-        data['access'] = str(refresh.access_token)
+        data = {
+            'access': str(refresh.access_token),
+        }
         
         return data
 
@@ -900,6 +899,106 @@ class ShowingAgreementResponseSerializer(serializers.Serializer):
     
     class Meta:
         ref_name = 'BuyerShowingAgreementResponseSerializer'
+
+
+class BuyerDocumentListSerializer(serializers.ModelSerializer):
+    """Serializer for listing buyer agreement documents"""
+    document_url = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    agent_name = serializers.SerializerMethodField()
+    property_name = serializers.SerializerMethodField()
+    property_address = serializers.SerializerMethodField()
+    signature_date = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = BuyerDocument
+        fields = [
+            'id', 'title', 'description', 'document_url', 
+            'status', 'agent_name', 'property_name', 'property_address',
+            'signature_date', 'file_size', 'created_at'
+        ]
+        read_only_fields = fields
+        ref_name = 'BuyerDocumentListSerializer'
+    
+    def get_document_url(self, obj):
+        request = self.context.get('request')
+        if obj.document_file:
+            if request:
+                return request.build_absolute_uri(obj.document_file.url)
+            return obj.document_file.url
+        return None
+    
+    def get_status(self, obj):
+        """Return document status based on title"""
+        if 'pending' in obj.title.lower():
+            return 'pending'
+        elif 'signed' in obj.title.lower() or obj.description and 'signed' in obj.description.lower():
+            return 'signed'
+        return 'signed'
+    
+    def get_agent_name(self, obj):
+        """Extract agent name from description if available"""
+        if obj.description and 'Agent:' in obj.description:
+            try:
+                agent_info = obj.description.split('Agent:')[1].split('|')[0].strip()
+                return agent_info
+            except:
+                pass
+        return 'Not specified'
+    
+    def get_property_name(self, obj):
+        """Extract property name from title"""
+        if obj.title:
+            return obj.title.split('-')[0].strip() if '-' in obj.title else obj.title
+        return 'N/A'
+    
+    def get_property_address(self, obj):
+        """Extract address from description"""
+        if obj.description and 'Address:' in obj.description:
+            try:
+                address = obj.description.split('Address:')[1].split('|')[0].strip()
+                return address
+            except:
+                pass
+        return 'Not specified'
+    
+    def get_signature_date(self, obj):
+        """Return signature date"""
+        return obj.created_at.date().isoformat() if obj.created_at else None
+
+
+class BuyerDocumentDetailSerializer(serializers.ModelSerializer):
+    """Serializer for viewing a single agreement document"""
+    document_url = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    file_size_mb = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = BuyerDocument
+        fields = [
+            'id', 'title', 'description', 'document_url',
+            'status', 'file_size', 'file_size_mb', 'created_at', 'updated_at'
+        ]
+        read_only_fields = fields
+        ref_name = 'BuyerDocumentDetailSerializer'
+    
+    def get_document_url(self, obj):
+        request = self.context.get('request')
+        if obj.document_file:
+            if request:
+                return request.build_absolute_uri(obj.document_file.url)
+            return obj.document_file.url
+        return None
+    
+    def get_status(self, obj):
+        if 'pending' in obj.title.lower():
+            return 'pending'
+        elif 'signed' in obj.title.lower() or obj.description and 'signed' in obj.description.lower():
+            return 'signed'
+        return 'signed'
+    
+    def get_file_size_mb(self, obj):
+        return round(obj.file_size / (1024 * 1024), 2)
 
 
 class SavedListingSerializer(serializers.ModelSerializer):

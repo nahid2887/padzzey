@@ -29,6 +29,9 @@ from .views import (
     # Showing Agreement Views
     ShowingAgreementSignView,
     ShowingAgreementDetailView,
+    # Agreement Views
+    BuyerAgreementListView,
+    BuyerAgreementDetailView,
     # Saved Listings Views
     SavedListingCreateView,
     SavedListingListView,
@@ -85,9 +88,13 @@ urlpatterns = [
     path('saved-listings/add/', SavedListingCreateView.as_view(), name='saved_listing_create'),
     path('saved-listings/<int:saved_listing_id>/', SavedListingDeleteView.as_view(), name='saved_listing_delete'),
     
+    # Buyer Agreements endpoints
+    path('agreements/', BuyerAgreementListView.as_view(), name='buyer_agreements_list'),
+    path('agreements/<int:agreement_id>/', BuyerAgreementDetailView.as_view(), name='buyer_agreement_detail'),
+    
     # Legal Documents (GET only)
     path('privacy-policy/', buyer_get_privacy_policy, name='get_privacy_policy'),
     path('terms-conditions/', buyer_get_terms_conditions, name='get_terms_conditions'),
-    path('agreements/', buyer_agreement_documents, name='buyer_agreements'),
+    path('agreements-documents/', buyer_agreement_documents, name='buyer_agreements_documents'),
 ]
 

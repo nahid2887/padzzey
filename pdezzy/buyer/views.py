@@ -1555,3 +1555,111 @@ class SavedListingDeleteView(views.APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+
+class BuyerAgreementListView(views.APIView):
+    """
+    List all buyer agreements (showing agreements and buyer documents)
+    Separated into pending and signed agreements
+    """
+    permission_classes = [IsAuthenticated, IsBuyer]
+    
+    @swagger_auto_schema(
+        operation_description="Get all buyer agreements - showing agreements and buyer documents separated by status",
+        responses={
+            200: openapi.Response(description="List of buyer agreements"),
+        },
+        tags=['Buyer Agreements']
+    )
+    def get(self, request):
+        """List all buyer agreements"""
+        from .models import ShowingAgreement, BuyerDocument, ShowingSchedule
+        from .serializers import ShowingAgreementResponseSerializer, BuyerDocumentListSerializer
+        
+        # Get showing agreements (pending and signed)
+        pending_showing_agreements = ShowingAgreement.objects.filter(
+            buyer=request.user,
+            agreement_accepted=False
+        ).select_related('showing_schedule', 'showing_schedule__property_listing', 'agent')
+        
+        signed_showing_agreements = ShowingAgreement.objects.filter(
+            buyer=request.user,
+            agreement_accepted=True
+        ).select_related('showing_schedule', 'showing_schedule__property_listing', 'agent')
+        
+        # Get buyer documents
+        buyer_documents = BuyerDocument.objects.filter(buyer=request.user)
+        
+        pending_serializer = ShowingAgreementResponseSerializer(
+            pending_showing_agreements, 
+            many=True,
+            context={'request': request}
+        )
+        signed_serializer = ShowingAgreementResponseSerializer(
+            signed_showing_agreements,
+            many=True,
+            context={'request': request}
+        )
+        documents_serializer = BuyerDocumentListSerializer(
+            buyer_documents,
+            many=True,
+            context={'request': request}
+        )
+        
+        return Response(
+            {
+                'pending_agreements': pending_serializer.data,
+                'signed_agreements': signed_serializer.data,
+                'documents': documents_serializer.data,
+                'total_pending': pending_showing_agreements.count(),
+                'total_signed': signed_showing_agreements.count(),
+                'total_documents': buyer_documents.count()
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class BuyerAgreementDetailView(views.APIView):
+    """
+    Get single buyer agreement details
+    Can view either a showing agreement or a buyer document
+    """
+    permission_classes = [IsAuthenticated, IsBuyer]
+    
+    @swagger_auto_schema(
+        operation_description="Get a single buyer agreement details by agreement ID or document ID",
+        responses={
+            200: openapi.Response(description="Agreement details"),
+            404: "Not Found - Agreement not found"
+        },
+        tags=['Buyer Agreements']
+    )
+    def get(self, request, agreement_id):
+        """Get agreement details"""
+        from .models import ShowingAgreement, BuyerDocument
+        from .serializers import ShowingAgreementResponseSerializer, BuyerDocumentDetailSerializer
+        
+        # Try to get as showing agreement first
+        try:
+            agreement = ShowingAgreement.objects.select_related(
+                'showing_schedule', 
+                'showing_schedule__property_listing', 
+                'agent'
+            ).get(id=agreement_id, buyer=request.user)
+            
+            serializer = ShowingAgreementResponseSerializer(agreement, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except ShowingAgreement.DoesNotExist:
+            pass
+        
+        # Try to get as buyer document
+        try:
+            document = BuyerDocument.objects.get(id=agreement_id, buyer=request.user)
+            serializer = BuyerDocumentDetailSerializer(document, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except BuyerDocument.DoesNotExist:
+            pass
+        
+        return Response(
+            {'error': 'Agreement not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
