@@ -1162,16 +1162,16 @@ class ShowingAgreementSignView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Convert file to base64 for storage
+        # Read file content
+        signature_file.seek(0)  # Reset file pointer
         signature_content = signature_file.read()
-        signature_base64 = base64.b64encode(signature_content).decode('utf-8')
         
-        # Also save file to media directory
+        # Save file to media directory
         from django.core.files.storage import default_storage
         import os
         
         # Create filename
-        pdf_filename = f'agreements/{schedule.buyer.username}/agreement_{schedule.id}_{timezone.now().timestamp()}.pdf'
+        pdf_filename = f'agreements/{schedule.buyer.username}/agreement_{schedule.id}_{int(timezone.now().timestamp())}.pdf'
         
         # Save to media
         file_path = default_storage.save(pdf_filename, ContentFile(signature_content))
