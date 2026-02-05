@@ -838,9 +838,41 @@ class ShowingAgreementResponseSerializer(serializers.Serializer):
         request = self.context.get('request')
         if obj.signature:
             try:
-                if request:
-                    return request.build_absolute_uri(f'/media/{obj.signature}')
-                return f'/media/{obj.signature}'
+                # Check if signature is a file path (new format) or base64 (old format)
+                if obj.signature.startswith('/') or obj.signature.startswith('agreements/'):
+                    # It's a file path
+                    if request:
+                        return request.build_absolute_uri(f'/media/{obj.signature}')
+                    return f'/media/{obj.signature}'
+                elif obj.signature.startswith('iVBORw0KGgo') or obj.signature.startswith('JVBERi0'):
+                    # It's base64 (PNG or PDF)
+                    # Convert base64 to file and save
+                    import base64
+                    from django.core.files.storage import default_storage
+                    from django.core.files.base import ContentFile
+                    
+                    try:
+                        # Decode base64
+                        file_content = base64.b64decode(obj.signature)
+                        
+                        # Save to media
+                        from django.utils import timezone
+                        filename = f'agreements/{obj.buyer.username}/agreement_{obj.id}_{int(timezone.now().timestamp())}.pdf'
+                        saved_path = default_storage.save(filename, ContentFile(file_content))
+                        
+                        # Update the object
+                        obj.signature = saved_path
+                        obj.save(update_fields=['signature'])
+                        
+                        # Return URL
+                        if request:
+                            return request.build_absolute_uri(f'/media/{saved_path}')
+                        return f'/media/{saved_path}'
+                    except:
+                        return None
+                else:
+                    # Unknown format
+                    return None
             except:
                 return None
         return None
