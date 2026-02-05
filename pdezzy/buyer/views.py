@@ -1669,12 +1669,13 @@ class BuyerAgreementDownloadView(views.APIView):
     Download signed agreement PDF
     Serves the base64 encoded signature/PDF as a downloadable file
     """
-    permission_classes = [IsAuthenticated, IsBuyer]
+    permission_classes = [IsAuthenticated, IsBuyer]  # Keep auth required
     
     @swagger_auto_schema(
-        operation_description="Download signed agreement PDF",
+        operation_description="Download signed agreement PDF - requires authentication",
         responses={
             200: openapi.Response(description="PDF file"),
+            401: "Unauthorized - No auth token provided",
             404: "Not Found - Agreement not found"
         },
         tags=['Buyer Agreements']
