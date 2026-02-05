@@ -1663,3 +1663,56 @@ class BuyerAgreementDetailView(views.APIView):
             {'error': 'Agreement not found'},
             status=status.HTTP_404_NOT_FOUND
         )
+
+class BuyerAgreementDownloadView(views.APIView):
+    """
+    Download signed agreement PDF
+    Serves the base64 encoded signature/PDF as a downloadable file
+    """
+    permission_classes = [IsAuthenticated, IsBuyer]
+    
+    @swagger_auto_schema(
+        operation_description="Download signed agreement PDF",
+        responses={
+            200: openapi.Response(description="PDF file"),
+            404: "Not Found - Agreement not found"
+        },
+        tags=['Buyer Agreements']
+    )
+    def get(self, request, agreement_id):
+        """Download agreement PDF"""
+        from .models import ShowingAgreement
+        import base64
+        from django.http import FileResponse, HttpResponse
+        
+        try:
+            agreement = ShowingAgreement.objects.get(id=agreement_id, buyer=request.user)
+        except ShowingAgreement.DoesNotExist:
+            return Response(
+                {'error': 'Agreement not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not agreement.signature:
+            return Response(
+                {'error': 'No signature/PDF available for this agreement'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            # Decode base64 signature/PDF
+            signature_bytes = base64.b64decode(agreement.signature)
+            
+            # Create HTTP response with PDF content
+            response = HttpResponse(
+                signature_bytes,
+                content_type='application/pdf'
+            )
+            response['Content-Disposition'] = f'attachment; filename="agreement_{agreement.id}.pdf"'
+            
+            return response
+        except Exception as e:
+            return Response(
+                {'error': f'Error downloading agreement: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )

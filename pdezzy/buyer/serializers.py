@@ -821,6 +821,7 @@ class ShowingAgreementResponseSerializer(serializers.Serializer):
     agreement_accepted = serializers.BooleanField(read_only=True)
     signed_at = serializers.DateTimeField(read_only=True)
     terms_text = serializers.CharField(read_only=True, allow_null=True)
+    signature_url = serializers.SerializerMethodField()
     
     # Basic names
     buyer_name = serializers.SerializerMethodField()
@@ -831,6 +832,13 @@ class ShowingAgreementResponseSerializer(serializers.Serializer):
     agent_details = serializers.SerializerMethodField()
     showing_details = serializers.SerializerMethodField()
     property_details = serializers.SerializerMethodField()
+    
+    def get_signature_url(self, obj):
+        """Return URL to download the signed agreement PDF"""
+        request = self.context.get('request')
+        if request and obj.id:
+            return request.build_absolute_uri(f'/api/v1/buyer/agreements/{obj.id}/download/')
+        return None
     
     def get_buyer_name(self, obj):
         return obj.buyer.get_full_name() or obj.buyer.username
