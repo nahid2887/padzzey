@@ -361,15 +361,16 @@ class SellingRequestCreateSerializer(serializers.ModelSerializer):
             'contact_email': {'help_text': 'Contact person email'},
             'contact_phone': {'help_text': 'Contact person phone number'},
             'start_date': {'help_text': 'When the selling period starts (YYYY-MM-DD)'},
-            'end_date': {'help_text': 'When the selling period ends (YYYY-MM-DD)'},
+            'end_date': {'required': False, 'allow_null': True, 'help_text': 'When the selling period ends (YYYY-MM-DD)'},
         }
     
     def validate(self, attrs):
         """Validate start date is before end date"""
-        if attrs['start_date'] >= attrs['end_date']:
-            raise serializers.ValidationError(
-                {"end_date": "End date must be after start date."}
-            )
+        if 'start_date' in attrs and 'end_date' in attrs and attrs['end_date']:
+            if attrs['start_date'] >= attrs['end_date']:
+                raise serializers.ValidationError(
+                    {"end_date": "End date must be after start date."}
+                )
         return attrs
 
 

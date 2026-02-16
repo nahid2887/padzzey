@@ -1168,13 +1168,26 @@ class ShowingAgreementSignView(views.APIView):
         
         # Save file to media directory
         from django.core.files.storage import default_storage
+        from django.conf import settings
         import os
         
-        # Create filename
-        pdf_filename = f'agreements/{schedule.buyer.username}/agreement_{schedule.id}_{int(timezone.now().timestamp())}.pdf'
+        # Ensure agreements directory exists
+        agreements_dir = os.path.join(settings.MEDIA_ROOT, 'agreements', schedule.buyer.username)
+        os.makedirs(agreements_dir, exist_ok=True)
+        
+        # Create filename with proper extension
+        file_ext = file_name.split('.')[-1] if '.' in file_name else 'pdf'
+        pdf_filename = f'agreements/{schedule.buyer.username}/agreement_{schedule.id}_{int(timezone.now().timestamp())}.{file_ext}'
         
         # Save to media
-        file_path = default_storage.save(pdf_filename, ContentFile(signature_content))
+        try:
+            file_path = default_storage.save(pdf_filename, ContentFile(signature_content))
+        except Exception as e:
+            print(f"Error saving file: {str(e)}")
+            return Response(
+                {'error': f'Error saving agreement: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Create showing agreement
         agreement = ShowingAgreement.objects.create(

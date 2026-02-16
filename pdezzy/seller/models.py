@@ -65,7 +65,7 @@ class SellingRequest(models.Model):
     
     # Time Frame
     start_date = models.DateField(help_text="When the selling period starts")
-    end_date = models.DateField(help_text="When the selling period ends")
+    end_date = models.DateField(null=True, blank=True, help_text="When the selling period ends")
     
     # Status
     status = models.CharField(
